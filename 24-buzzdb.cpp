@@ -537,7 +537,31 @@ public:
 
 //Run-Length Encoding
 class RunLengthEncoder{
-    
+public:
+    std::vector<std::pair<int, int>> encode(const std::vector<int>& data){
+        std::vector<std::pair<int, int>> encoded_data;
+        int n = data.size();
+        for(int i = 0; i < n; ++i){
+            int count = 1;
+            while(i + 1 < n && data[i] == data[i + 1]){
+                ++count;
+                ++i;
+
+            }
+            encoded_data.push_back({data[i], count});
+        }
+        return encoded_data;
+    }
+
+    std::vector<int> decode(const std::vector<std::pair<int, int>> &encoded_data)
+    {
+        std::vector<int> decoded_data;
+        for (const auto &pair : encoded_data)
+        {
+            decoded_data.insert(decoded_data.end(), pair.second, pair.first);
+        }
+        return decoded_data;
+    }
 };
 
 class BuzzDB {
@@ -546,70 +570,137 @@ public:
 
     BufferManager buffer_manager;
 
+
 public:
     size_t max_number_of_tuples = 5000;
     size_t tuple_insertion_attempt_counter = 0;
+
+    DictionaryEncoder dict_encoder;
+    RunLengthEncoder rle_encoder;
 
     BuzzDB(){
         // Storage Manager automatically created
     }
 
-    bool try_to_insert(int key, int value){
-        bool status = false;
-        auto num_pages = buffer_manager.getNumPages();
-        for (size_t page_itr = 0; page_itr < num_pages; page_itr++) {
+    void batchInsertData(const std::vector<int> &keys, const std::vector<int> &values)
+    {
+        std::vector<int> encoded_keys, encoded_values;
+
+        // Dictionary Encoding
+        for (const auto &key : keys)
+        {
+            encoded_keys.push_back(dict_encoder.encode(std::to_string(key)));
+        }
+
+        // RLE Encoding for consecutive values
+        auto compressed_values = rle_encoder.encode(values);
+
+        // Insert compressed data
+        for (size_t i = 0; i < compressed_values.size(); i++)
+        {
+            auto &compressed_pair = compressed_values[i];
 
             auto newTuple = std::make_unique<Tuple>();
+            newTuple->addField(std::make_unique<Field>(encoded_keys[i]));
+            newTuple->addField(std::make_unique<Field>(compressed_pair.first));
+            newTuple->addField(std::make_unique<Field>(compressed_pair.second));
 
-            auto key_field = std::make_unique<Field>(key);
-            auto value_field = std::make_unique<Field>(value);
-            float float_val = 132.04;
-            auto float_field = std::make_unique<Field>(float_val);
-            auto string_field = std::make_unique<Field>("buzzdb");
+            bool status = try_to_insert(newTuple);
 
-            newTuple->addField(std::move(key_field));
-            newTuple->addField(std::move(value_field));
-            newTuple->addField(std::move(float_field));
-            newTuple->addField(std::move(string_field));
-
-            auto& page = buffer_manager.getPage(page_itr);
-
+            // Extend the buffer if the page is full
+            if (!status)
+            {
+                buffer_manager.extend();
+                status = try_to_insert(newTuple);
+            }
+        }
+    }
+    bool try_to_insert(std::unique_ptr<Tuple> &newTuple)
+    {
+        bool status = false;
+        auto num_pages = buffer_manager.getNumPages();
+        for (size_t page_itr = 0; page_itr < num_pages; page_itr++)
+        {
+            auto &page = buffer_manager.getPage(page_itr);
             status = page->addTuple(std::move(newTuple));
-            if (status == true){
-                //std::cout << "Inserted into page: " << page_itr << "\n";
+            if (status)
+            {
                 buffer_manager.flushPage(page_itr);
                 break;
             }
         }
-
         return status;
     }
 
-    // insert function
-    void insert(int key, int value) {
+    // bool try_to_insert(int key, int value){
+    //     bool status = false;
+    //     auto num_pages = buffer_manager.getNumPages();
+    //     for (size_t page_itr = 0; page_itr < num_pages; page_itr++) {
+
+    //         auto newTuple = std::make_unique<Tuple>();
+
+    //         auto key_field = std::make_unique<Field>(key);
+    //         auto value_field = std::make_unique<Field>(value);
+    //         float float_val = 132.04;
+    //         auto float_field = std::make_unique<Field>(float_val);
+    //         auto string_field = std::make_unique<Field>("buzzdb");
+
+    //         newTuple->addField(std::move(key_field));
+    //         newTuple->addField(std::move(value_field));
+    //         newTuple->addField(std::move(float_field));
+    //         newTuple->addField(std::move(string_field));
+
+    //         auto& page = buffer_manager.getPage(page_itr);
+
+    //         status = page->addTuple(std::move(newTuple));
+    //         if (status == true){
+    //             //std::cout << "Inserted into page: " << page_itr << "\n";
+    //             buffer_manager.flushPage(page_itr);
+    //             break;
+    //         }
+    //     }
+
+    //     return status;
+// }
+
+// insert function
+// void insert(int key, int value) {
+//     tuple_insertion_attempt_counter += 1;
+
+//     if(tuple_insertion_attempt_counter >= max_number_of_tuples){
+//         return;
+//     }
+
+//     bool status = try_to_insert(key, value);
+
+//     // Try again after extending the database file
+//     if(status == false){
+//         buffer_manager.extend();
+//         bool status2 = try_to_insert(key, value);
+//         assert(status2 == true);
+//     }
+
+//     //newTuple->print();
+
+//     // Skip deleting tuples only once every hundred tuples
+//     if (tuple_insertion_attempt_counter % 100 != 0){
+//         auto& page = buffer_manager.getPage(0);
+//         page->deleteTuple(0);
+//         buffer_manager.flushPage(0);
+//     }
+// }
+    void insert(int key, int value)
+    {
         tuple_insertion_attempt_counter += 1;
 
-        if(tuple_insertion_attempt_counter >= max_number_of_tuples){
+        if (tuple_insertion_attempt_counter >= max_number_of_tuples)
+        {
             return;
         }
 
-        bool status = try_to_insert(key, value);
-
-        // Try again after extending the database file
-        if(status == false){
-            buffer_manager.extend();
-            bool status2 = try_to_insert(key, value);
-            assert(status2 == true);
-        }
-
-        //newTuple->print();
-
-        // Skip deleting tuples only once every hundred tuples
-        if (tuple_insertion_attempt_counter % 100 != 0){
-            auto& page = buffer_manager.getPage(0);
-            page->deleteTuple(0);
-            buffer_manager.flushPage(0);
-        }
+        std::vector<int> keys{key};
+        std::vector<int> values{value};
+        batchInsertData(keys, values);
     }
 
     void scanTableToBuildIndex(){
@@ -654,6 +745,8 @@ int main() {
 
     std::ifstream inputFile("output.txt");
 
+    std::vector<int> keys, values;
+
     if (!inputFile) {
         std::cerr << "Unable to open file" << std::endl;
         return 1;
@@ -661,8 +754,13 @@ int main() {
 
     int field1, field2;
     while (inputFile >> field1 >> field2) {
-        db.insert(field1, field2);
+        // db.insert(field1, field2);
+        keys.push_back(field1);
+        values.push_back(field2);
     }
+
+    //perform batch insert
+    db.batchInsertData(keys, values);
 
     db.scanTableToBuildIndex();
     
