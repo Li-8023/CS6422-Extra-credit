@@ -632,63 +632,6 @@ public:
         return status;
     }
 
-    // bool try_to_insert(int key, int value){
-    //     bool status = false;
-    //     auto num_pages = buffer_manager.getNumPages();
-    //     for (size_t page_itr = 0; page_itr < num_pages; page_itr++) {
-
-    //         auto newTuple = std::make_unique<Tuple>();
-
-    //         auto key_field = std::make_unique<Field>(key);
-    //         auto value_field = std::make_unique<Field>(value);
-    //         float float_val = 132.04;
-    //         auto float_field = std::make_unique<Field>(float_val);
-    //         auto string_field = std::make_unique<Field>("buzzdb");
-
-    //         newTuple->addField(std::move(key_field));
-    //         newTuple->addField(std::move(value_field));
-    //         newTuple->addField(std::move(float_field));
-    //         newTuple->addField(std::move(string_field));
-
-    //         auto& page = buffer_manager.getPage(page_itr);
-
-    //         status = page->addTuple(std::move(newTuple));
-    //         if (status == true){
-    //             //std::cout << "Inserted into page: " << page_itr << "\n";
-    //             buffer_manager.flushPage(page_itr);
-    //             break;
-    //         }
-    //     }
-
-    //     return status;
-// }
-
-// insert function
-// void insert(int key, int value) {
-//     tuple_insertion_attempt_counter += 1;
-
-//     if(tuple_insertion_attempt_counter >= max_number_of_tuples){
-//         return;
-//     }
-
-//     bool status = try_to_insert(key, value);
-
-//     // Try again after extending the database file
-//     if(status == false){
-//         buffer_manager.extend();
-//         bool status2 = try_to_insert(key, value);
-//         assert(status2 == true);
-//     }
-
-//     //newTuple->print();
-
-//     // Skip deleting tuples only once every hundred tuples
-//     if (tuple_insertion_attempt_counter % 100 != 0){
-//         auto& page = buffer_manager.getPage(0);
-//         page->deleteTuple(0);
-//         buffer_manager.flushPage(0);
-//     }
-// }
     void insert(int key, int value)
     {
         tuple_insertion_attempt_counter += 1;
