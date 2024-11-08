@@ -4,7 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
-
+#include <cstring>
 #include <list>
 #include <unordered_map>
 #include <iostream>
@@ -15,6 +15,7 @@
 #include <limits>
 #include <thread>
 #include <queue>
+#include <cassert>
 
 enum FieldType { INT, FLOAT, STRING };
 
@@ -84,23 +85,37 @@ public:
         return buffer.str();
     }
 
-    void serialize(std::ofstream& out) {
-        std::string serializedData = this->serialize();
-        out << serializedData;
+    void serialize(std::ofstream &out)
+    {
+        out.write(reinterpret_cast<const char *>(&type), sizeof(type));
+        out.write(reinterpret_cast<const char *>(&data_length), sizeof(data_length));
+        out.write(data.get(), data_length);
     }
 
-    static std::unique_ptr<Field> deserialize(std::istream& in) {
-        int type; in >> type;
-        size_t length; in >> length;
-        if (type == STRING) {
-            std::string val; in >> val;
-            return std::make_unique<Field>(val);
-        } else if (type == INT) {
-            int val; in >> val;
-            return std::make_unique<Field>(val);
-        } else if (type == FLOAT) {
-            float val; in >> val;
-            return std::make_unique<Field>(val);
+    static std::unique_ptr<Field> deserialize(std::istream &in)
+    {
+        FieldType type;
+        in.read(reinterpret_cast<char *>(&type), sizeof(type));
+
+        size_t length;
+        in.read(reinterpret_cast<char *>(&length), sizeof(length));
+
+        std::unique_ptr<char[]> data = std::make_unique<char[]>(length);
+        in.read(data.get(), length);
+
+        if (type == STRING)
+        {
+            return std::make_unique<Field>(std::string(data.get()));
+        }
+        else if (type == INT)
+        {
+            int value = *reinterpret_cast<int *>(data.get());
+            return std::make_unique<Field>(value);
+        }
+        else if (type == FLOAT)
+        {
+            float value = *reinterpret_cast<float *>(data.get());
+            return std::make_unique<Field>(value);
         }
         return nullptr;
     }
@@ -163,7 +178,7 @@ public:
 };
 
 static constexpr size_t PAGE_SIZE = 4096;  // Fixed page size
-static constexpr size_t MAX_SLOTS = 512;   // Fixed number of slots
+static constexpr size_t MAX_SLOTS = 128;   // Fixed number of slots
 uint16_t INVALID_VALUE = std::numeric_limits<uint16_t>::max(); // Sentinel value
 
 struct Slot {
@@ -189,69 +204,78 @@ public:
     }
 
     // Add a tuple, returns true if it fits, false otherwise.
-    bool addTuple(std::unique_ptr<Tuple> tuple) {
-
-        // Serialize the tuple into a char array
+    bool addTuple(std::unique_ptr<Tuple> tuple)
+    {
         auto serializedTuple = tuple->serialize();
         size_t tuple_size = serializedTuple.size();
+        std::cout << "Attempting to add tuple of size " << tuple_size << " bytes\n";
 
-        //std::cout << "Tuple size: " << tuple_size << " bytes\n";
-        assert(tuple_size == 38);
+        Slot *slot_array = reinterpret_cast<Slot *>(page_data.get());
 
-        // Check for first slot with enough space
-        size_t slot_itr = 0;
-        Slot* slot_array = reinterpret_cast<Slot*>(page_data.get());        
-        for (; slot_itr < MAX_SLOTS; slot_itr++) {
-            if (slot_array[slot_itr].empty == true and 
-                slot_array[slot_itr].length >= tuple_size) {
-                break;
+        // Calculate the currently used space based on metadata and data in occupied slots.
+        size_t used_space = metadata_size;
+        size_t max_offset = metadata_size; // Start at metadata size
+
+        // Iterate over each slot to account for used space
+        for (size_t i = 0; i < MAX_SLOTS; ++i)
+        {
+            if (!slot_array[i].empty)
+            {
+                used_space += slot_array[i].length;
+                max_offset = std::max(max_offset, static_cast<size_t>(slot_array[i].offset + slot_array[i].length));
             }
         }
-        if (slot_itr == MAX_SLOTS){
-            //std::cout << "Page does not contain an empty slot with sufficient space to store the tuple.";
+
+        // Available space on the page
+        size_t available_space = PAGE_SIZE - max_offset;
+
+        // Add debug statements here to print the used and available space
+        std::cout << "Used space: " << used_space << " bytes, metadata size: " << metadata_size << "\n";
+        std::cout << "Available space: " << available_space << " bytes\n";
+
+        if (tuple_size > available_space)
+        {
+            std::cout << "Not enough available space: " << available_space
+                      << " bytes, required: " << tuple_size << " bytes\n";
             return false;
         }
 
-        // Identify the offset where the tuple will be placed in the page
-        // Update slot meta-data if needed
-        slot_array[slot_itr].empty = false;
-        size_t offset = INVALID_VALUE;
-        if (slot_array[slot_itr].offset == INVALID_VALUE){
-            if(slot_itr != 0){
-                auto prev_slot_offset = slot_array[slot_itr - 1].offset;
-                auto prev_slot_length = slot_array[slot_itr - 1].length;
-                offset = prev_slot_offset + prev_slot_length;
+        // Find an empty slot and assign it to the new tuple.
+        for (size_t slot_itr = 0; slot_itr < MAX_SLOTS; slot_itr++)
+        {
+            if (slot_array[slot_itr].empty)
+            {
+                size_t offset = max_offset;
+
+                // Ensure the offset stays within the bounds of PAGE_SIZE.
+                if (offset + tuple_size > PAGE_SIZE)
+                {
+                    std::cout << "Error: Offset exceeds available page size. Unable to insert.\n";
+                    return false;
+                }
+
+                // Update slot metadata
+                slot_array[slot_itr].empty = false;
+                slot_array[slot_itr].offset = offset;
+                slot_array[slot_itr].length = tuple_size;
+
+                // Add debug output here to track slot assignment
+                std::cout << "Slot " << slot_itr << " assigned at offset " << offset
+                          << " with tuple size " << tuple_size << "\n";
+
+                // Insert the serialized tuple data at the calculated offset
+                std::memcpy(page_data.get() + offset, serializedTuple.c_str(), tuple_size);
+
+                // Update max_offset to reflect the newly inserted tuple
+                max_offset = offset + tuple_size;
+
+                std::cout << "Inserted tuple at offset " << offset << " in slot " << slot_itr << "\n";
+                return true;
             }
-            else{
-                offset = metadata_size;
-            }
-
-            slot_array[slot_itr].offset = offset;
-        }
-        else{
-            offset = slot_array[slot_itr].offset;
         }
 
-        if(offset + tuple_size >= PAGE_SIZE){
-            slot_array[slot_itr].empty = true;
-            slot_array[slot_itr].offset = INVALID_VALUE;
-            return false;
-        }
-
-        assert(offset != INVALID_VALUE);
-        assert(offset >= metadata_size);
-        assert(offset + tuple_size < PAGE_SIZE);
-
-        if (slot_array[slot_itr].length == INVALID_VALUE){
-            slot_array[slot_itr].length = tuple_size;
-        }
-
-        // Copy serialized data into the page
-        std::memcpy(page_data.get() + offset, 
-                    serializedTuple.c_str(), 
-                    tuple_size);
-
-        return true;
+        std::cout << "No suitable empty slot found for tuple insertion\n";
+        return false;
     }
 
     void deleteTuple(size_t index) {
@@ -584,18 +608,16 @@ public:
 
     void batchInsertData(const std::vector<int> &keys, const std::vector<int> &values)
     {
+        std::cout << "Starting batchInsertData\n";
         std::vector<int> encoded_keys, encoded_values;
 
-        // Dictionary Encoding
         for (const auto &key : keys)
         {
             encoded_keys.push_back(dict_encoder.encode(std::to_string(key)));
         }
 
-        // RLE Encoding for consecutive values
         auto compressed_values = rle_encoder.encode(values);
 
-        // Insert compressed data
         for (size_t i = 0; i < compressed_values.size(); i++)
         {
             auto &compressed_pair = compressed_values[i];
@@ -605,30 +627,52 @@ public:
             newTuple->addField(std::make_unique<Field>(compressed_pair.first));
             newTuple->addField(std::make_unique<Field>(compressed_pair.second));
 
+            std::cout << "Inserting tuple " << i << "\n";
             bool status = try_to_insert(newTuple);
 
-            // Extend the buffer if the page is full
             if (!status)
             {
+                std::cout << "Extending buffer for tuple " << i << "\n";
                 buffer_manager.extend();
-                status = try_to_insert(newTuple);
+                status = try_to_insert(newTuple); // Try once after extending
+
+                if (!status)
+                {
+                    std::cerr << "Error: Unable to insert tuple even after extending\n";
+                    break; // Prevent infinite loop by breaking
+                }
             }
         }
+        std::cout << "Completed batchInsertData\n";
     }
+
     bool try_to_insert(std::unique_ptr<Tuple> &newTuple)
     {
         bool status = false;
         auto num_pages = buffer_manager.getNumPages();
         for (size_t page_itr = 0; page_itr < num_pages; page_itr++)
         {
+            std::cout << "Trying to insert tuple in page " << page_itr << "\n";
             auto &page = buffer_manager.getPage(page_itr);
             status = page->addTuple(std::move(newTuple));
+
             if (status)
             {
+                std::cout << "Inserted tuple in page " << page_itr << "\n";
                 buffer_manager.flushPage(page_itr);
                 break;
             }
+            else
+            {
+                std::cout << "Failed to insert in page " << page_itr << "\n";
+            }
         }
+
+        if (!status)
+        {
+            std::cout << "Failed to insert tuple after checking all pages\n";
+        }
+
         return status;
     }
 
@@ -646,31 +690,35 @@ public:
         batchInsertData(keys, values);
     }
 
-    void scanTableToBuildIndex(){
-
-        std::cout << "Scanning table to build index \n";
-
+    void scanTableToBuildIndex()
+    {
+        std::cout << "Scanning table to build index\n";
         auto num_pages = buffer_manager.getNumPages();
 
-        for (size_t page_itr = 0; page_itr < num_pages; page_itr++) {
-            auto& page = buffer_manager.getPage(page_itr);
-            char* page_buffer = page->page_data.get();
-            Slot* slot_array = reinterpret_cast<Slot*>(page_buffer);
-            for (size_t slot_itr = 0; slot_itr < MAX_SLOTS; slot_itr++) {
-                if (slot_array[slot_itr].empty == false){
+        for (size_t page_itr = 0; page_itr < num_pages; page_itr++)
+        {
+            std::cout << "Accessing page: " << page_itr << "\n";
+            auto &page = buffer_manager.getPage(page_itr);
+            char *page_buffer = page->page_data.get();
+            Slot *slot_array = reinterpret_cast<Slot *>(page_buffer);
+
+            for (size_t slot_itr = 0; slot_itr < MAX_SLOTS; slot_itr++)
+            {
+                if (slot_array[slot_itr].empty == false)
+                {
+                    std::cout << "Found non-empty slot at index: " << slot_itr << "\n";
                     assert(slot_array[slot_itr].offset != INVALID_VALUE);
-                    const char* tuple_data = page_buffer + slot_array[slot_itr].offset;
+                    const char *tuple_data = page_buffer + slot_array[slot_itr].offset;
                     std::istringstream iss(tuple_data);
                     auto loadedTuple = Tuple::deserialize(iss);
                     int key = loadedTuple->fields[0]->asInt();
                     int value = loadedTuple->fields[1]->asInt();
 
-                    // Build index
                     index.insertOrUpdate(key, value);
                 }
             }
         }
-
+        std::cout << "Completed scanning table to build index\n";
     }
 
     // perform a SELECT ... GROUP BY ... SUM query
@@ -678,45 +726,99 @@ public:
        index.print();
     }
 
+    void runTest(BuzzDB& db, const std::string& filename){
+        std::cout << "Starting batch insert for " << filename << "\n";
+
+        std::ifstream inputFile(filename);
+
+        if (!inputFile)
+        {
+            std::cerr << "Unable to open file: " << filename << std::endl;
+            return;
+        }
+
+        std::vector<int> keys, values;
+        int key, value;
+
+        while (inputFile >> key >> value)
+        {
+            keys.push_back(key);
+            values.push_back(value);
+        }
+
+        // Measure insertion time
+        auto start = std::chrono::high_resolution_clock::now();
+        db.batchInsertData(keys, values);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> insertion_time = end - start;
+        std::cout << "Insertion time for " << filename << ": " << insertion_time.count() << " seconds\n";
+
+        // Measure query time
+        start = std::chrono::high_resolution_clock::now();
+        db.scanTableToBuildIndex();
+        db.selectGroupBySum();
+        end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> query_time = end - start;
+        std::cout << "Query time for " << filename << ": " << query_time.count() << " seconds\n";
+
+        // Measure storage (file size)
+        std::ifstream db_file("buzzdb.dat", std::ios::binary | std::ios::ate);
+        if (db_file.is_open())
+        {
+            auto file_size = db_file.tellg();
+            std::cout << "Storage size for " << filename << ": " << file_size << " bytes\n";
+            db_file.close();
+        }
+    }
+
 };
 
 int main() {
     // Get the start time
-    auto start = std::chrono::high_resolution_clock::now();
+    // auto start = std::chrono::high_resolution_clock::now();
 
     BuzzDB db;
 
-    std::ifstream inputFile("output.txt");
+    // std::ifstream inputFile("output.txt");
 
-    std::vector<int> keys, values;
+    // std::vector<int> keys, values;
 
-    if (!inputFile) {
-        std::cerr << "Unable to open file" << std::endl;
-        return 1;
-    }
+    // if (!inputFile) {
+    //     std::cerr << "Unable to open file" << std::endl;
+    //     return 1;
+    // }
 
-    int field1, field2;
-    while (inputFile >> field1 >> field2) {
-        // db.insert(field1, field2);
-        keys.push_back(field1);
-        values.push_back(field2);
-    }
+    // int field1, field2;
+    // while (inputFile >> field1 >> field2) {
+    //     // db.insert(field1, field2);
+    //     keys.push_back(field1);
+    //     values.push_back(field2);
+    // }
 
-    //perform batch insert
-    db.batchInsertData(keys, values);
+    // //perform batch insert
+    // db.batchInsertData(keys, values);
 
-    db.scanTableToBuildIndex();
+    // db.scanTableToBuildIndex();
     
-    db.selectGroupBySum();
+    // db.selectGroupBySum();
 
-    std::cout << "Num Pages: " << db.buffer_manager.getNumPages() << "\n";
+    // std::cout << "Num Pages: " << db.buffer_manager.getNumPages() << "\n";
 
-    // Get the end time
-    auto end = std::chrono::high_resolution_clock::now();
+    // // Get the end time
+    // auto end = std::chrono::high_resolution_clock::now();
 
-    // Calculate and print the elapsed time
-    std::chrono::duration<double> elapsed = end - start;
-    std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
+    // // Calculate and print the elapsed time
+    // std::chrono::duration<double> elapsed = end - start;
+    // std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
+
+    std::cout << "Testing High Repetition Data:\n";
+    db.runTest(db, "high_repetition.txt");
+
+    std::cout << "\nTesting Categorical Data:\n";
+    db.runTest(db, "categorical_data.txt");
+
+    std::cout << "\nTesting Mixed Data:\n";
+    db.runTest(db, "mixed_data.txt");
 
     return 0;
 }
