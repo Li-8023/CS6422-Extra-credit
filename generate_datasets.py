@@ -9,7 +9,7 @@ def generate_dataset(filename, num_entries):
 
 if __name__ == "__main__":
     dataset_filename = "output.txt"
-    num_entries = 10
+    num_entries = 1000
     generate_dataset(dataset_filename, num_entries)
     print(f"Dataset with {num_entries} entries generated in '{dataset_filename}'.")
 
