@@ -783,52 +783,13 @@ public:
     }
 };
 
-// int main()
-// {
-//     // Get the start time for non-compressed version
-//     auto start_no_compression = std::chrono::high_resolution_clock::now();
-
-//     BuzzDB db_no_compression;
-
-//     std::ifstream inputFile("output.txt");
-//     if (!inputFile)
-//     {
-//         std::cerr << "Unable to open file" << std::endl;
-//         return 1;
-//     }
-
-//     int field1, field2;
-//     while (inputFile >> field1 >> field2)
-//     {
-//         db_no_compression.insert(field1, field2);
-//     }
-
-//     auto end_no_compression = std::chrono::high_resolution_clock::now();
-//     std::chrono::duration<double> elapsed_no_compression = end_no_compression - start_no_compression;
-//     std::cout << "Elapsed time (no compression): " << elapsed_no_compression.count() << " seconds" << std::endl;
-
-//     // Get the start time for compressed version
-//     auto start_compression = std::chrono::high_resolution_clock::now();
-
-//     BuzzDB db_compression;
-
-//     inputFile.clear();
-//     inputFile.seekg(0, std::ios::beg);
-
-//     while (inputFile >> field1 >> field2)
-//     {
-//         db_compression.insert(field1, field2);
-//     }
-
-//     auto end_compression = std::chrono::high_resolution_clock::now();
-//     std::chrono::duration<double> elapsed_compression = end_compression - start_compression;
-//     std::cout << "Elapsed time (with compression): " << elapsed_compression.count() << " seconds" << std::endl;
-
-//     return 0;
-// }
 int main()
 {
-    // Open input file
+    // Get the start time for non-compressed version
+    auto start_no_compression = std::chrono::high_resolution_clock::now();
+
+    BuzzDB db_no_compression;
+
     std::ifstream inputFile("output.txt");
     if (!inputFile)
     {
@@ -837,65 +798,31 @@ int main()
     }
 
     int field1, field2;
-
-    // Test performance without compression
-    auto start_no_compression = std::chrono::high_resolution_clock::now();
-    BuzzDB db_no_compression;
     while (inputFile >> field1 >> field2)
     {
         db_no_compression.insert(field1, field2);
     }
+
     auto end_no_compression = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed_no_compression = end_no_compression - start_no_compression;
     std::cout << "Elapsed time (no compression): " << elapsed_no_compression.count() << " seconds" << std::endl;
 
-    // Reset file stream
+    // Get the start time for compressed version
+    auto start_compression = std::chrono::high_resolution_clock::now();
+
+    BuzzDB db_compression;
+
     inputFile.clear();
     inputFile.seekg(0, std::ios::beg);
 
-    // Test performance with Run-Length Encoding (RLE)
-    auto start_rle_compression = std::chrono::high_resolution_clock::now();
-    BuzzDB db_rle_compression;
-    db_rle_compression.buffer_manager.setCompressor(std::make_unique<RunLengthEncoding>());
     while (inputFile >> field1 >> field2)
     {
-        db_rle_compression.insert(field1, field2);
+        db_compression.insert(field1, field2);
     }
-    auto end_rle_compression = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed_rle_compression = end_rle_compression - start_rle_compression;
-    std::cout << "Elapsed time (RLE compression): " << elapsed_rle_compression.count() << " seconds" << std::endl;
 
-    // Reset file stream
-    inputFile.clear();
-    inputFile.seekg(0, std::ios::beg);
-
-    // Test performance with Dictionary Encoding
-    auto start_dict_compression = std::chrono::high_resolution_clock::now();
-    BuzzDB db_dict_compression;
-    db_dict_compression.buffer_manager.setCompressor(std::make_unique<DictionaryEncoding>());
-    while (inputFile >> field1 >> field2)
-    {
-        db_dict_compression.insert(field1, field2);
-    }
-    auto end_dict_compression = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed_dict_compression = end_dict_compression - start_dict_compression;
-    std::cout << "Elapsed time (Dictionary compression): " << elapsed_dict_compression.count() << " seconds" << std::endl;
-
-    // Reset file stream
-    inputFile.clear();
-    inputFile.seekg(0, std::ios::beg);
-
-    // Test performance with Batch Compression (RLE + Dictionary)
-    auto start_batch_compression = std::chrono::high_resolution_clock::now();
-    BuzzDB db_batch_compression;
-    db_batch_compression.buffer_manager.setCompressor(std::make_unique<BatchCompressor>());
-    while (inputFile >> field1 >> field2)
-    {
-        db_batch_compression.insert(field1, field2);
-    }
-    auto end_batch_compression = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed_batch_compression = end_batch_compression - start_batch_compression;
-    std::cout << "Elapsed time (Batch compression): " << elapsed_batch_compression.count() << " seconds" << std::endl;
+    auto end_compression = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed_compression = end_compression - start_compression;
+    std::cout << "Elapsed time (with compression): " << elapsed_compression.count() << " seconds" << std::endl;
 
     return 0;
 }
